@@ -1,0 +1,23 @@
+[project]
+name = "research-agent"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic",
+    "tavily-python",
+    "pydantic",
+    "httpx",
+    "rich",
+    "python-dotenv",
+    "tenacity",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+]
+
+[project.scripts]
+research-agent = "src.main:main"
