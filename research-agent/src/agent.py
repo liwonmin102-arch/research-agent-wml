@@ -1,10 +1,9 @@
 """Core agent loop: plan → act → observe → reflect → synthesize."""
 
 import time
+from typing import Callable
 
 from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 
 from src.llm import ResearchLLM
 from src.models import (
@@ -20,52 +19,47 @@ from src.search import TavilySearcher
 class ResearchAgent:
     """Orchestrates the full research pipeline."""
 
-    def __init__(self):
+    def __init__(self, on_progress: Callable[[str], None] | None = None):
         self.console = Console()
         self.searcher = TavilySearcher()
         self.llm = ResearchLLM()
+        self.on_progress = on_progress
+
+    def _emit(self, message: str) -> None:
+        """Emit a plain-text progress message to console and optional callback."""
+        self.console.print(message)
+        if self.on_progress is not None:
+            self.on_progress(message)
 
     def _plan(self, topic: str) -> list[SearchQuery]:
         """PLAN step: Generate diverse search queries for the topic."""
-        self.console.print(
-            Panel(
-                f"[bold]Researching:[/] {topic}",
-                title="Research Agent",
-                border_style="blue",
-            )
-        )
-        self.console.print("[bold cyan]Step 1/5:[/] Planning search strategy...")
+        self._emit(f"Researching: {topic}")
+        self._emit("Step 1/5: Planning search strategy...")
 
         queries = self.llm.generate_search_queries(topic)
 
-        table = Table(title="Search Plan", show_lines=True)
-        table.add_column("#", style="dim", width=3)
-        table.add_column("Query", style="bold")
-        table.add_column("Rationale", style="italic")
         for i, q in enumerate(queries, 1):
-            table.add_row(str(i), q.query, q.rationale)
-        self.console.print(table)
+            self._emit(f"  {i}. {q.query} — {q.rationale}")
 
         return queries
 
     def _act(self, queries: list[SearchQuery]) -> dict[str, list[SearchResult]]:
         """ACT step: Execute all search queries via Tavily."""
-        self.console.print("\n[bold cyan]Step 2/5:[/] Searching the web...")
+        self._emit("Step 2/5: Searching the web...")
 
         results = self.searcher.batch_search(queries)
 
         total_results = sum(len(v) for v in results.values())
-        self.console.print(
-            f"[green]Found {total_results} results across {len(results)} queries.[/]\n"
+        self._emit(
+            f"Found {total_results} results across {len(results)} queries."
         )
-
         return results
 
     def _observe(
         self, search_results: dict[str, list[SearchResult]], topic: str
     ) -> list[SourceSummary]:
         """OBSERVE step: Summarize each unique source using the LLM."""
-        self.console.print("[bold cyan]Step 3/5:[/] Analyzing sources...")
+        self._emit("Step 3/5: Analyzing sources...")
 
         seen_urls: set[str] = set()
         unique_results: list[SearchResult] = []
@@ -75,15 +69,12 @@ class ResearchAgent:
                     seen_urls.add(result.url)
                     unique_results.append(result)
 
-        self.console.print(
-            f"[dim]{len(unique_results)} unique sources after deduplication.[/]"
-        )
+        self._emit(f"{len(unique_results)} unique sources after deduplication.")
 
         summaries: list[SourceSummary] = []
         for i, result in enumerate(unique_results, 1):
-            self.console.print(
-                f"  [{i}/{len(unique_results)}] Analyzing: "
-                f"[link={result.url}]{result.title}[/link]"
+            self._emit(
+                f"  [{i}/{len(unique_results)}] Analyzing: {result.title}"
             )
             summary = self.llm.summarize_source(result.content, topic)
             # LLM may hallucinate url/title — trust the search result instead.
@@ -91,21 +82,20 @@ class ResearchAgent:
             summary.title = result.title
             summaries.append(summary)
 
-        self.console.print(f"[green]Analyzed {len(summaries)} sources.[/]\n")
+        self._emit(f"Analyzed {len(summaries)} sources.")
         return summaries
 
     def _reflect(
         self, summaries: list[SourceSummary], topic: str
     ) -> tuple[list[SourceSummary], list[Contradiction]]:
         """REFLECT step: Identify contradictions and do one round of follow-up searches if found."""
-        self.console.print("[bold cyan]Step 4/5:[/] Identifying contradictions...")
+        self._emit("Step 4/5: Identifying contradictions...")
 
         contradictions = self.llm.identify_contradictions(summaries)
 
         if contradictions:
-            self.console.print(
-                f"[yellow]Found {len(contradictions)} contradiction(s). "
-                "Running follow-up searches...[/]"
+            self._emit(
+                f"Found {len(contradictions)} contradiction(s). Running follow-up searches..."
             )
 
             follow_up_topic = (
@@ -122,11 +112,11 @@ class ResearchAgent:
             summaries = summaries + new_summaries
 
             contradictions = self.llm.identify_contradictions(summaries)
-            self.console.print(
-                f"[dim]After follow-up: {len(contradictions)} contradiction(s) remain.[/]\n"
+            self._emit(
+                f"After follow-up: {len(contradictions)} contradiction(s) remain."
             )
         else:
-            self.console.print("[green]No contradictions found across sources.[/]\n")
+            self._emit("No contradictions found across sources.")
 
         return summaries, contradictions
 
@@ -137,20 +127,15 @@ class ResearchAgent:
         contradictions: list[Contradiction],
     ) -> ResearchReport:
         """SYNTHESIZE step: Produce the final structured research report."""
-        self.console.print("[bold cyan]Step 5/5:[/] Synthesizing final report...")
+        self._emit("Step 5/5: Synthesizing final report...")
 
         report = self.llm.synthesize_report(topic, summaries, contradictions)
 
-        self.console.print(
-            Panel(
-                f"[bold green]Research complete![/]\n"
-                f"Sources analyzed: {len(summaries)}\n"
-                f"Contradictions found: {len(contradictions)}\n"
-                f"Follow-up questions: {len(report.follow_up_questions)}\n"
-                f"Total API calls: {self.llm.api_call_count}",
-                title="Summary",
-                border_style="green",
-            )
+        self._emit(
+            f"Research complete! Sources: {len(summaries)}, "
+            f"Contradictions: {len(contradictions)}, "
+            f"Follow-up questions: {len(report.follow_up_questions)}, "
+            f"API calls: {self.llm.api_call_count}"
         )
 
         return report
@@ -166,6 +151,6 @@ class ResearchAgent:
         report = self._synthesize(topic, summaries, contradictions)
 
         elapsed = time.time() - start_time
-        self.console.print(f"[dim]Total time: {elapsed:.1f} seconds[/]\n")
+        self._emit(f"Total time: {elapsed:.1f} seconds")
 
         return report

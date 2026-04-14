@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Research Agent</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+  <style>
+    .container { max-width: 720px; margin: 0 auto; padding: 2rem 1rem; }
+    header { text-align: center; margin-bottom: 2rem; }
+    header h1 { margin-bottom: 0.25rem; }
+    header p { color: var(--pico-muted-color); margin: 0; }
+    .steps {
+      display: flex;
+      justify-content: space-between;
+      align-items: stretch;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+    .step {
+      flex: 1 1 0;
+      min-width: 90px;
+      text-align: center;
+      padding: 1rem 0.5rem;
+      border: 1px solid var(--pico-muted-border-color);
+      border-radius: var(--pico-border-radius);
+      background: var(--pico-card-background-color);
+    }
+    .step .icon { font-size: 1.5rem; display: block; margin-bottom: 0.25rem; }
+    .step .label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--pico-muted-color);
+    }
+    footer {
+      text-align: center;
+      margin-top: 3rem;
+      color: var(--pico-muted-color);
+      font-size: 0.875rem;
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>Research Agent</h1>
+      <p>Autonomous web research powered by AI</p>
+    </header>
+
+    <form method="post" action="/research">
+      <input
+        type="text"
+        name="topic"
+        placeholder="Enter a research topic, e.g. 'Impact of AI on healthcare in 2026'"
+        required
+        minlength="3"
+        maxlength="500"
+        autofocus
+      />
+      <button type="submit">Start Research</button>
+    </form>
+
+    <section>
+      <h3>How it works</h3>
+      <div class="steps">
+        <div class="step"><span class="icon">🧭</span><span class="label">Plan</span></div>
+        <div class="step"><span class="icon">🔍</span><span class="label">Search</span></div>
+        <div class="step"><span class="icon">🧠</span><span class="label">Analyze</span></div>
+        <div class="step"><span class="icon">🤔</span><span class="label">Reflect</span></div>
+        <div class="step"><span class="icon">📄</span><span class="label">Report</span></div>
+      </div>
+    </section>
+
+    <footer>
+      <small>Powered by Claude &amp; Tavily</small>
+    </footer>
+  </main>
+</body>
+</html>

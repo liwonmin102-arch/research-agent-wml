@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Research — {{ topic }}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+</head>
+<body>
+  <main class="container" hx-ext="sse" sse-connect="/api/progress/{{ task_id }}">
+    <div class="topic-header">
+      <h1>Research</h1>
+      <p class="topic">{{ topic }}</p>
+      <p><a href="/">&larr; New research</a></p>
+    </div>
+
+    <section id="progress-section">
+      <details id="progress-details" open>
+        <summary><strong>Live progress</strong></summary>
+        <div id="progress-log" sse-swap="progress" hx-swap="beforeend">
+          <span class="line">Connecting to agent stream…</span>
+        </div>
+      </details>
+    </section>
+
+    <div id="report-container" sse-swap="complete" hx-swap="innerHTML">
+      <!-- Report HTML will be swapped in when the 'complete' SSE event fires. -->
+    </div>
+  </main>
+
+  <script>
+    // When the 'complete' event arrives, collapse the progress log so the report gets focus.
+    document.body.addEventListener('htmx:sseMessage', function (evt) {
+      if (evt.detail.type === 'complete') {
+        const d = document.getElementById('progress-details');
+        if (d) d.open = false;
+      }
+    });
+  </script>
+</body>
+</html>

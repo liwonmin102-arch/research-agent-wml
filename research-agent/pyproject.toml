@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "research-agent"
 version = "0.1.0"
@@ -10,6 +14,11 @@ dependencies = [
     "rich",
     "python-dotenv",
     "tenacity",
+    "fastapi",
+    "uvicorn",
+    "jinja2",
+    "python-multipart",
+    "sse-starlette",
 ]
 
 [project.optional-dependencies]
@@ -21,3 +30,7 @@ dev = [
 
 [project.scripts]
 research-agent = "src.main:main"
+research-agent-web = "src.web:run"
+
+[tool.setuptools]
+packages = ["src"]
