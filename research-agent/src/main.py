@@ -1,106 +1,176 @@
-"""CLI entry point for the research agent."""
+"""CLI entrypoint for the multi-agent research agent."""
 
 import argparse
-import datetime
-import os
+import json
 import re
 import sys
+import traceback
+from datetime import datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 from rich.console import Console
 
-from src.agent import ResearchAgent
-from src.report import render_json, render_markdown
+from src.models import DraftReport, ResearchSession
+from src.orchestrator import run_research
+
+
+def _slugify(text: str, max_len: int = 60) -> str:
+    slug = re.sub(r"[^\w\s-]", "", text.lower()).strip()
+    slug = re.sub(r"[-\s]+", "-", slug)
+    return slug[:max_len].rstrip("-")
+
+
+def render_markdown(session: ResearchSession) -> str:
+    """Render a ResearchSession as a full formal markdown report."""
+    r: DraftReport | None = session.draft_report
+    if r is None:
+        raise ValueError("Cannot render markdown: session has no draft_report.")
+
+    lines: list[str] = []
+    lines.append(f"# {r.title}")
+    lines.append("")
+    lines.append(f"*Research topic: {session.topic}*  ")
+    lines.append(
+        f"*Generated: {(session.completed_at or datetime.now()):%Y-%m-%d %H:%M}*  "
+    )
+    if session.critic_report:
+        lines.append(
+            f"*Sources analyzed: {len(session.source_analyses)} | "
+            f"Overall confidence: {session.critic_report.overall_confidence}/100*"
+        )
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    lines.append("## Executive Summary")
+    lines.append("")
+    lines.append(r.executive_summary)
+    lines.append("")
+
+    lines.append("## Introduction")
+    lines.append("")
+    lines.append(r.introduction)
+    lines.append("")
+
+    lines.append("## Key Findings and Analysis")
+    lines.append("")
+    for f in r.key_findings:
+        lines.append(f"### {f.theme}")
+        lines.append("")
+        lines.append(f.content)
+        lines.append("")
+
+    lines.append("## Contradictions, Debates, and Uncertainties")
+    lines.append("")
+    lines.append(r.contradictions_section)
+    lines.append("")
+
+    lines.append("## Implications and Applications")
+    lines.append("")
+    lines.append(r.implications)
+    lines.append("")
+
+    lines.append("## Limitations of Current Knowledge")
+    lines.append("")
+    lines.append(r.limitations)
+    lines.append("")
+
+    lines.append("## Conclusion")
+    lines.append("")
+    lines.append(r.conclusion)
+    lines.append("")
+
+    lines.append("## References")
+    lines.append("")
+    for i, ref in enumerate(r.references, 1):
+        author = f" — {ref.author}" if ref.author else ""
+        date = f" ({ref.publication_date})" if ref.publication_date else ""
+        lines.append(f"{i}. [{ref.title}]({ref.url}){author}{date}")
+    lines.append("")
+
+    lines.append("## Study Guide for Deep Learning")
+    lines.append("")
+    lines.append("### Key Takeaways")
+    lines.append("")
+    for t in r.study_guide.key_takeaways:
+        lines.append(f"- {t}")
+    lines.append("")
+    lines.append("### Critical Thinking Questions")
+    lines.append("")
+    for q in r.study_guide.critical_thinking_questions:
+        lines.append(f"- {q}")
+    lines.append("")
+    lines.append("### Suggested Further Reading")
+    lines.append("")
+    for ref in r.study_guide.further_reading:
+        author = f" — {ref.author}" if ref.author else ""
+        lines.append(f"- [{ref.title}]({ref.url}){author}")
+    lines.append("")
+
+    return "\n".join(lines)
 
 
 def main():
     load_dotenv()
-    console = Console()
 
     parser = argparse.ArgumentParser(
-        prog="research-agent",
-        description="Autonomous research agent that searches, summarizes, and produces structured reports.",
+        description=(
+            "Multi-agent research agent: autonomous web research with bias detection, "
+            "contradiction analysis, and formal report output."
+        )
     )
-    parser.add_argument("topic", type=str, help="The research topic to investigate")
+    parser.add_argument("topic", type=str, help="The research topic")
     parser.add_argument(
         "--max-sources",
         type=int,
-        default=10,
-        help="Maximum number of sources to analyze",
+        default=None,
+        help="Override the Planner's target source count (default: Planner decides)",
     )
     parser.add_argument(
-        "--output-format",
-        choices=["markdown", "json"],
-        default="markdown",
-        help="Output format for the report",
+        "--output-format", choices=["markdown", "json"], default="markdown"
+    )
+    parser.add_argument("--output-dir", type=str, default="outputs")
+    parser.add_argument(
+        "--no-reflection",
+        action="store_true",
+        help="Skip the reflection round (faster, less thorough)",
     )
     parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="outputs",
-        help="Directory to save reports",
+        "--verbose", action="store_true", help="Show full tracebacks on errors"
     )
-    parser.add_argument(
-        "--verbose", action="store_true", help="Enable verbose logging"
-    )
-
     args = parser.parse_args()
 
-    if len(args.topic.strip()) < 3:
-        console.print("[red]Error: Topic must be at least 3 characters.[/]")
-        sys.exit(1)
-    if len(args.topic) > 500:
-        console.print("[red]Error: Topic must be under 500 characters.[/]")
-        sys.exit(1)
-
-    missing_keys = []
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        missing_keys.append("ANTHROPIC_API_KEY")
-    if not os.getenv("TAVILY_API_KEY"):
-        missing_keys.append("TAVILY_API_KEY")
-    if missing_keys:
-        console.print(
-            f"[red]Error: Missing environment variables: {', '.join(missing_keys)}[/]"
-        )
-        console.print("[dim]Copy .env.example to .env and fill in your API keys.[/]")
-        sys.exit(1)
-
-    console.print("\n[bold blue]═══ Research Agent ═══[/bold blue]\n")
+    console = Console()
 
     try:
-        agent = ResearchAgent()
-        report = agent.research(args.topic)
-
-        os.makedirs(args.output_dir, exist_ok=True)
-        slug = re.sub(r"[^a-z0-9]+", "-", args.topic.lower()).strip("-")[:50]
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        if args.output_format == "markdown":
-            content = render_markdown(report)
-            filename = f"{slug}_{timestamp}.md"
-        else:
-            content = render_json(report)
-            filename = f"{slug}_{timestamp}.json"
-
-        filepath = os.path.join(args.output_dir, filename)
-        with open(filepath, "w") as f:
-            f.write(content)
-
-        console.print(f"\n[bold green]Report saved to:[/] {filepath}")
-
-        console.print("\n[bold]Executive Summary:[/]")
-        console.print(report.summary)
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Research interrupted by user.[/]")
-        console.print("[dim]Partial results were not saved.[/]")
-        sys.exit(0)
+        session = run_research(
+            topic=args.topic,
+            enable_reflection=not args.no_reflection,
+        )
     except Exception as e:
-        console.print(f"\n[red]Error: {e}[/]")
+        console.print(f"[bold red]Research failed:[/] {e}")
         if args.verbose:
-            console.print_exception()
-        else:
-            console.print("[dim]Run with --verbose for full traceback.[/]")
+            traceback.print_exc()
         sys.exit(1)
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    slug = _slugify(args.topic)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    if args.output_format == "markdown":
+        output_path = output_dir / f"{slug}-{timestamp}.md"
+        output_path.write_text(render_markdown(session), encoding="utf-8")
+    else:
+        output_path = output_dir / f"{slug}-{timestamp}.json"
+        output_path.write_text(
+            json.dumps(session.model_dump(mode="json"), indent=2, default=str),
+            encoding="utf-8",
+        )
+
+    console.print(f"\n[bold green]Report saved:[/] {output_path}")
 
 
 if __name__ == "__main__":

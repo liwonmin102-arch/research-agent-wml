@@ -6,11 +6,9 @@
   <title>Research — {{ topic }}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
   <link rel="stylesheet" href="/static/style.css" />
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-  <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
 </head>
 <body>
-  <main class="container" hx-ext="sse" sse-connect="/api/progress/{{ task_id }}">
+  <main class="container">
     <div class="topic-header">
       <h1>Research</h1>
       <p class="topic">{{ topic }}</p>
@@ -20,25 +18,84 @@
     <section id="progress-section">
       <details id="progress-details" open>
         <summary><strong>Live progress</strong></summary>
-        <div id="progress-log" sse-swap="progress" hx-swap="beforeend">
+        <div id="progress-log">
           <span class="line">Connecting to agent stream…</span>
         </div>
       </details>
     </section>
 
-    <div id="report-container" sse-swap="complete" hx-swap="innerHTML">
-      <!-- Report HTML will be swapped in when the 'complete' SSE event fires. -->
-    </div>
+    <div id="report-container"></div>
+
+    <div id="error-container" hidden></div>
   </main>
 
   <script>
-    // When the 'complete' event arrives, collapse the progress log so the report gets focus.
-    document.body.addEventListener('htmx:sseMessage', function (evt) {
-      if (evt.detail.type === 'complete') {
-        const d = document.getElementById('progress-details');
-        if (d) d.open = false;
+    (function () {
+      const jobId = {{ job_id | tojson }};
+      const log = document.getElementById('progress-log');
+      const report = document.getElementById('report-container');
+      const details = document.getElementById('progress-details');
+      const errorBox = document.getElementById('error-container');
+
+      const es = new EventSource(`/research/stream/${jobId}`);
+      let finished = false;
+
+      function appendLine(text, cls) {
+        const span = document.createElement('span');
+        span.className = 'line' + (cls ? ' ' + cls : '');
+        span.textContent = text;
+        log.appendChild(span);
+        log.scrollTop = log.scrollHeight;
       }
-    });
+
+      es.addEventListener('progress', (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          appendLine(payload.line, payload.class || '');
+        } catch (err) {
+          appendLine(String(e.data));
+        }
+      });
+
+      es.addEventListener('complete', (e) => {
+        finished = true;
+        es.close();                      // critical: prevents auto-reconnect
+        try {
+          const payload = JSON.parse(e.data);
+          report.innerHTML = payload.html || '';
+        } catch (err) {
+          report.textContent = 'Failed to render report: ' + err;
+        }
+        if (details) details.open = false;
+      });
+
+      es.addEventListener('error', (e) => {
+        // Distinguish a server-sent 'error' event from a transport-level failure.
+        // A server-sent event has e.data; transport failures don't.
+        if (e.data) {
+          finished = true;
+          es.close();
+          try {
+            const payload = JSON.parse(e.data);
+            errorBox.textContent = 'Error: ' + (payload.message || 'Unknown');
+          } catch (err) {
+            errorBox.textContent = 'Error: ' + String(e.data);
+          }
+          errorBox.hidden = false;
+        } else if (finished) {
+          // Already done — suppress reconnect attempts.
+          es.close();
+        }
+        // Otherwise it's a transient transport error; let the browser retry.
+      });
+
+      es.addEventListener('close', () => {
+        finished = true;
+        es.close();
+      });
+
+      window.addEventListener('beforeunload', () => { es.close(); });
+    })();
   </script>
 </body>
 </html>

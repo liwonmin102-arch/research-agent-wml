@@ -1,12 +1,13 @@
-"""Tavily search API wrapper."""
+"""Tavily search API wrapper — produces SearchResult objects matching src/models.py."""
 
 import os
 import time
+from urllib.parse import urlparse
 
 from rich.console import Console
 from tavily import TavilyClient
 
-from src.models import SearchQuery, SearchResult
+from src.models import SearchResult
 
 
 class TavilySearcher:
@@ -21,31 +22,60 @@ class TavilySearcher:
         self.client = TavilyClient(api_key=api_key)
         self.console = Console()
 
+    @staticmethod
+    def _extract_domain(url: str) -> str:
+        try:
+            netloc = urlparse(url).netloc.lower()
+            return netloc[4:] if netloc.startswith("www.") else netloc
+        except Exception:
+            return ""
+
     def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        """Run one Tavily query; return structured SearchResult list. [] on failure."""
         try:
             response = self.client.search(
                 query=query,
                 max_results=max_results,
                 search_depth="advanced",
             )
-            return [
-                SearchResult(
-                    url=r["url"],
-                    title=r["title"],
-                    content=r["content"],
-                    relevance_score=r.get("score", 0.0),
-                )
-                for r in response.get("results", [])
-            ]
+            results: list[SearchResult] = []
+            for r in response.get("results", []):
+                try:
+                    results.append(
+                        SearchResult(
+                            url=r["url"],
+                            title=r.get("title", "Untitled"),
+                            content_snippet=r.get("content", "")[:2000],
+                            published_date=r.get("published_date"),
+                            source_domain=self._extract_domain(r["url"]),
+                            tavily_score=r.get("score"),
+                        )
+                    )
+                except Exception as e:
+                    self.console.print(f"[yellow]Skipped malformed result: {e}[/]")
+            return results
         except Exception as e:
             self.console.print(f"[yellow]Search failed for '{query}': {e}[/]")
             return []
 
-    def batch_search(self, queries: list[SearchQuery]) -> dict[str, list[SearchResult]]:
-        results: dict[str, list[SearchResult]] = {}
-        for i, query in enumerate(queries):
-            self.console.print(f"[bold blue]Searching:[/] {query.query}")
-            results[query.query] = self.search(query.query)
+    def batch_search(
+        self,
+        queries: list[str],
+        max_results_per_query: int = 5,
+        pause_seconds: float = 1.0,
+    ) -> list[SearchResult]:
+        """Run multiple plain-string queries, deduplicate by URL, return a flat list."""
+        seen_urls: set[str] = set()
+        all_results: list[SearchResult] = []
+        for i, q in enumerate(queries):
+            self.console.print(f"[bold blue]Searching[/] ({i+1}/{len(queries)}): {q}")
+            for result in self.search(q, max_results=max_results_per_query):
+                if result.url not in seen_urls:
+                    seen_urls.add(result.url)
+                    all_results.append(result)
             if i < len(queries) - 1:
-                time.sleep(1)
-        return results
+                time.sleep(pause_seconds)
+        self.console.print(
+            f"[dim]Collected {len(all_results)} unique sources across {len(queries)} queries.[/]"
+        )
+        return all_results
